@@ -118,7 +118,7 @@ class LatticeMRF:
         # データ平均の計算
         for n in range(batch_size):
             data = np.zeros((x[n].shape[1] + 1, x[n].shape[2] + 1))
-            data[1:, 1:] = x
+            data[1:-1, 1:-1] = x
             data = data.tolist()
 
             for i in range(self.height):
@@ -156,13 +156,23 @@ class LatticeMRF:
         for e in range(epoch):
             self.update_params(x)
 
-    def transform(self, x):
+    def transform(self, x: np.ndarray):
         """
+        Args:
+            x: 入力データ <w, h>
+
+        Returns:
+            * np.ndarray - 1回推論後のデータ
+
         NOTICE:
             乱数サンプリングするか最大確率をとるか未定
         """
+        self._node = np.array(self._node, dtype="float32")
+        self._node[1:-1, 1:-1] = x
+
+
         pass
-        
+
 
 
 #%%
