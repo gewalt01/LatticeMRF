@@ -1,4 +1,10 @@
-# %%
+"""
+ハンズオン用
+
+パフォーマンスについては一切考慮していない
+入出力は{-1, +1}の値を取る行列
+"""
+
 import numpy as np
 import math
 import random
@@ -25,7 +31,7 @@ class LatticeMRF:
         """int: Lattice height."""
         return self._height
 
-    lr = 0.01  #: float: 学習率
+    lr = 0.1  #: float: 学習率
 
     def __init__(self, width: int, height: int):
         """
@@ -35,12 +41,15 @@ class LatticeMRF:
         """
         self._width = width
         self._height = height
-        self._node = np.zeros((width + 2, height + 2), dtype="float32").tolist()
-        self._weight_horizontal = np.zeros((width + 1, height), dtype="float32").tolist()
-        self._weight_vertical = np.zeros((width, height + 1), dtype="float32").tolist()
+        self._node = np.zeros((width + 2, height + 2), dtype="float32")
+        self._weight_horizontal = np.random.uniform(-0.01, +0.01, (width + 1, height)).astype("float32")
+        self._weight_horizontal[0, :] = 0  # パディングノードに対するウェイトは0
+        
+        self._weight_vertical = np.random.uniform(-0.01, +0.01, (width, height + 1)).astype("float32")
+        self._weight_vertical[:, 0] = 0  # パディングノードに対するウェイトは0
 
-        self.burnin_time = 100
-        self.sumpling_num = 100
+        self.burnin_time = 15
+        self.sumpling_num = 30
 
     def _sum_around_weight_node(self, row: int, col: int):
         """
@@ -54,10 +63,10 @@ class LatticeMRF:
             パディング関係を要確認
         """
 
-        sum_value = self._weight_horizontal[1 + col - 1][row] * self._node[1 + col - 1][1 + row]
-        sum_value += self._weight_horizontal[1 + col][row] * self._node[1 + col + 1][1 + row]
-        sum_value += self._weight_vertical[col][1 + row - 1] * self._node[1 + col][1 + row - 1]
-        sum_value += self._weight_vertical[col][1 + row] * self._node[1 + col][1 + row + 1]
+        sum_value = self._weight_horizontal[1 + col - 1, row] * self._node[1 + col - 1, 1 + row]
+        sum_value += self._weight_horizontal[1 + col, row] * self._node[1 + col + 1, 1 + row]
+        sum_value += self._weight_vertical[col, 1 + row - 1] * self._node[1 + col, 1 + row - 1]
+        sum_value += self._weight_vertical[col, 1 + row] * self._node[1 + col, 1 + row + 1]
 
         return sum_value
 
@@ -71,10 +80,10 @@ class LatticeMRF:
         """
         u = random.uniform(0, 1)
 
-        z = math.exp(self._sum_around_weight_node(row, col)) + 1.0
-        p = 1.0 / z
+        z = math.exp(self._sum_around_weight_node(row, col)) + math.exp(-self._sum_around_weight_node(row, col))
+        p = math.exp(-self._sum_around_weight_node(row, col)) / z
 
-        value = 1.0 if p < u else 0.0
+        value = -1.0 if u < p else 1.0
 
         return value
 
@@ -93,14 +102,14 @@ class LatticeMRF:
         全ノードサンプリング
 
         Returns:
-            *list - サンプル結果(※内部計算用のパディングしたノード含む)
+            * np.ndarray - サンプル結果(※内部計算用のパディングしたノード含む)
         """
 
         nodes = copy.deepcopy(self._node)
 
         for i in range(self.height):
             for j in range(self.width):
-                nodes[j + 1][i + 1] = self.gibbs_sampling(i, j)
+                nodes[j + 1, i + 1] = self.gibbs_sampling(i, j)
 
         return nodes
 
@@ -112,23 +121,22 @@ class LatticeMRF:
             x: 学習データ　<b, h, w>
         """
         batch_size = x.shape[0]
-        mean_w_h_data = np.zeros((self.width + 1, self.height), dtype="float32").tolist()
-        mean_w_v_data = np.zeros((self.width, self.height + 1), dtype="float32").tolist()
+        mean_w_h_data = np.zeros((self.width + 1, self.height), dtype="float32")
+        mean_w_v_data = np.zeros((self.width, self.height + 1), dtype="float32")
 
         # データ平均の計算
         for n in range(batch_size):
-            data = np.zeros((x[n].shape[1] + 1, x[n].shape[2] + 1))
-            data[1:-1, 1:-1] = x
-            data = data.tolist()
+            data = np.zeros((x[n].shape[0] + 2, x[n].shape[1] + 2))
+            data[1:-1, 1:-1] = x[n]
 
             for i in range(self.height):
                 for j in range(self.width):
-                    mean_w_h_data[1 + j][i] = data[1 + j][1 + i] * data[1 + j + 1][1 + i] / batch_size
-                    mean_w_v_data[j][1 + i] = data[1 + j][1 + i] * data[1 + j][1 + i + 1] / batch_size
+                    mean_w_h_data[1 + j, i] = data[1 + j, 1 + i] * data[1 + j + 1, 1 + i] / batch_size
+                    mean_w_v_data[j, 1 + i] = data[1 + j, 1 + i] * data[1 + j, 1 + i + 1] / batch_size
 
         # モデルの期待値計算 (モンテカルロ積分)
-        mean_w_h_model = np.zeros((self.width + 1, self.height), dtype="float32").tolist()
-        mean_w_v_model = np.zeros((self.width, self.height + 1), dtype="float32").tolist()
+        mean_w_h_model = np.zeros((self.width + 1, self.height), dtype="float32")
+        mean_w_v_model = np.zeros((self.width, self.height + 1), dtype="float32")
         for n in range(self.sumpling_num):
             self.burnin()
             nodes = self._sampling_all_node()
@@ -136,16 +144,18 @@ class LatticeMRF:
             # サンプル平均
             for i in range(self.height):
                 for j in range(self.width):
-                    mean_w_h_model[1 + j][i] = nodes._node[1 + j][1 + i] * nodes[1 + j + 1][1 + i] / self.sumpling_num
-                    mean_w_v_model[j][1 + i] = nodes[1 + j][1 + i] * nodes[1 + j][1 + i + 1] / self.sumpling_num
+                    mean_w_h_model[1 + j, i] = nodes[1 + j, 1 + i] * nodes[1 + j + 1, 1 + i] / self.sumpling_num
+                    mean_w_v_model[j, 1 + i] = nodes[1 + j, 1 + i] * nodes[1 + j, 1 + i + 1] / self.sumpling_num
 
         # パラメータ更新 (勾配上昇法)
         for i in range(self.height):
             for j in range(self.width):
-                self._weight_horizontal[1 + j][i] += LatticeMRF.lr * (mean_w_h_data[1 + j][i] - mean_w_h_model[1 + j][i])
-                self._weight_vertical[j][1 + i] += LatticeMRF.lr * (mean_w_v_model[j][1 + i] - mean_w_v_model[j][1 + i])
+                grad_h = LatticeMRF.lr * (mean_w_h_data[1 + j, i] - mean_w_h_model[1 + j, i])
+                grad_v = LatticeMRF.lr * (mean_w_v_data[j, 1 + i] - mean_w_v_model[j, 1 + i])
+                self._weight_horizontal[1 + j, i] += grad_h
+                self._weight_vertical[j, 1 + i] += grad_v
 
-    def fit(self, x: np.ndarray, epoch: str = 1):
+    def fit(self, x: np.ndarray, epoch: str = 50):
         """
         学習する.
 
@@ -169,10 +179,4 @@ class LatticeMRF:
         """
         self._node = np.array(self._node, dtype="float32")
         self._node[1:-1, 1:-1] = x
-
-
-        pass
-
-
-
-#%%
+        return self._sampling_all_node()[1:-1, 1:-1]
